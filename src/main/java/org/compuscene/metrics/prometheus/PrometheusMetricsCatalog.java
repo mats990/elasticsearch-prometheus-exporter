@@ -64,31 +64,6 @@ public class PrometheusMetricsCatalog {
         gauge.labels(getExtendedLabelValues(label_values)).set(value);
     }
 
-    public void registerCounter(String metric, String help, String... labels) {
-        Counter counter = Counter.build().
-                name(metric_prefix + metric).
-                help(help).
-                labelNames(getExtendedLabelNames(labels)).
-                register(registry);
-
-        metrics.put(metric, counter);
-
-        logger.debug(String.format("Registered new counter %s", metric));
-    }
-
-    public void setCounter(String metric, double value, String... label_values) {
-        String[] extended_label_values = getExtendedLabelValues(label_values);
-        Counter counter = (Counter) metrics.get(metric);
-
-        double increment = value - counter.labels(extended_label_values).get();
-
-        if (increment >= 0) {
-            counter.labels(extended_label_values).inc(increment);
-        } else {
-            logger.error(String.format("Can not increment metric %s with value %f, skipping", metric, increment));
-        }
-    }
-
     public void registerSummaryTimer(String metric, String help, String... labels) {
         Summary summary = Summary.build().
                 name(metric_prefix + metric).
