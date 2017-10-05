@@ -83,7 +83,7 @@ public class PrometheusMetricsCollector {
         for (TaskInfo parentTask : parentTasks) {
             TaskInfo taskInfo = longestRunningTasks.get(parentTask.getAction());
             if (taskInfo == null || taskInfo.getRunningTimeNanos()> parentTask.getRunningTimeNanos()){
-                longestRunningTasks.put(parentTask.getAction(), taskInfo);
+                longestRunningTasks.put(parentTask.getAction(), parentTask);
             }
         }
         for (Map.Entry<String, TaskInfo> entry : longestRunningTasks.entrySet()) {
