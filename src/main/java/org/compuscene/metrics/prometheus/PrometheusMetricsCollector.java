@@ -70,13 +70,21 @@ public class PrometheusMetricsCollector {
     }
 
     private void updateTasksMetrics(ListTasksResponse listTasksResponse) {
-        List<TaskInfo> tasks = listTasksResponse.getTasks();
-        List<TaskInfo> parentTasks = new ArrayList<>();
-        for (TaskInfo task : tasks) {
-            if (!task.getParentTaskId().isSet()){
-                parentTasks.add(task);
-            }
+        List<TaskInfo> parentTasks = filterParentTasks(listTasksResponse.getTasks());
+        Map<String, TaskInfo> longestRunningTasks = parentTasksToLongestRunningTasks(parentTasks);
+
+        longRunningTaskActions.addAll(longestRunningTasks.keySet());
+        for (Map.Entry<String, TaskInfo> entry : longestRunningTasks.entrySet()) {
+            catalog.setGauge("tasks_duration_max", getRunningTimeInSeconds(entry.getValue()), entry.getKey());
         }
+    }
+
+    private long getRunningTimeInSeconds(TaskInfo taskInfo) {
+        long runningTimeNanos = taskInfo != null ? taskInfo.getRunningTimeNanos() : 0;
+        return TimeUnit.NANOSECONDS.toSeconds(runningTimeNanos);
+    }
+
+    private Map<String, TaskInfo> parentTasksToLongestRunningTasks(List<TaskInfo> parentTasks) {
         Map<String, TaskInfo> longestRunningTasks = new LinkedHashMap<>();
         for (String action : longRunningTaskActions) {
             longestRunningTasks.put(action, null);
@@ -87,12 +95,17 @@ public class PrometheusMetricsCollector {
                 longestRunningTasks.put(parentTask.getAction(), parentTask);
             }
         }
-        longRunningTaskActions.addAll(longestRunningTasks.keySet());
-        for (Map.Entry<String, TaskInfo> entry : longestRunningTasks.entrySet()) {
-            long runningTimeNanos = entry.getValue() != null ? entry.getValue().getRunningTimeNanos() : 0;
-            long seconds = TimeUnit.NANOSECONDS.toSeconds(runningTimeNanos);
-            catalog.setGauge("tasks_duration_max", seconds, entry.getKey());
+        return longestRunningTasks;
+    }
+
+    private List<TaskInfo> filterParentTasks(List<TaskInfo> tasks) {
+        List<TaskInfo> parentTasks = new ArrayList<>();
+        for (TaskInfo task : tasks) {
+            if (!task.getParentTaskId().isSet()){
+                parentTasks.add(task);
+            }
         }
+        return parentTasks;
     }
 
     private void registerClusterMetrics() {
