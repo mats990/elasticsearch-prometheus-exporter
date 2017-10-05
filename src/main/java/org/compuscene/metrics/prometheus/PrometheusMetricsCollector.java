@@ -21,10 +21,7 @@ import org.elasticsearch.script.ScriptStats;
 import org.elasticsearch.threadpool.ThreadPoolStats;
 import org.elasticsearch.transport.TransportStats;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 public class PrometheusMetricsCollector {
@@ -33,6 +30,7 @@ public class PrometheusMetricsCollector {
 
     private String cluster;
     private String node;
+    private Set<String> longRunningTaskActions = new HashSet<>();
 
     private PrometheusMetricsCatalog catalog;
 
@@ -79,15 +77,20 @@ public class PrometheusMetricsCollector {
                 parentTasks.add(task);
             }
         }
-        Map<String, TaskInfo> longestRunningTasks = new HashMap<>();
+        Map<String, TaskInfo> longestRunningTasks = new LinkedHashMap<>();
+        for (String action : longRunningTaskActions) {
+            longestRunningTasks.put(action, null);
+        }
         for (TaskInfo parentTask : parentTasks) {
             TaskInfo taskInfo = longestRunningTasks.get(parentTask.getAction());
             if (taskInfo == null || taskInfo.getRunningTimeNanos()> parentTask.getRunningTimeNanos()){
                 longestRunningTasks.put(parentTask.getAction(), parentTask);
             }
         }
+        longRunningTaskActions.addAll(longestRunningTasks.keySet());
         for (Map.Entry<String, TaskInfo> entry : longestRunningTasks.entrySet()) {
-            long seconds = TimeUnit.NANOSECONDS.toSeconds(entry.getValue().getRunningTimeNanos());
+            long runningTimeNanos = entry.getValue() != null ? entry.getValue().getRunningTimeNanos() : 0;
+            long seconds = TimeUnit.NANOSECONDS.toSeconds(runningTimeNanos);
             catalog.setGauge("tasks_duration_max", seconds, entry.getKey());
         }
     }
