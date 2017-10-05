@@ -6,6 +6,8 @@ import org.elasticsearch.action.admin.cluster.health.ClusterHealthResponse;
 import org.elasticsearch.action.admin.cluster.node.stats.NodeStats;
 import org.elasticsearch.action.admin.cluster.node.stats.NodesStatsRequest;
 import org.elasticsearch.action.admin.cluster.node.stats.NodesStatsResponse;
+import org.elasticsearch.action.admin.cluster.node.tasks.list.ListTasksResponse;
+import org.elasticsearch.action.admin.cluster.node.tasks.list.TaskInfo;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.http.HttpStats;
 import org.elasticsearch.indices.NodeIndicesStats;
@@ -19,12 +21,16 @@ import org.elasticsearch.script.ScriptStats;
 import org.elasticsearch.threadpool.ThreadPoolStats;
 import org.elasticsearch.transport.TransportStats;
 
+import java.util.*;
+import java.util.concurrent.TimeUnit;
+
 public class PrometheusMetricsCollector {
 
     private final Client client;
 
     private String cluster;
     private String node;
+    private Set<String> longRunningTaskActions = new HashSet<>();
 
     private PrometheusMetricsCatalog catalog;
 
@@ -55,7 +61,51 @@ public class PrometheusMetricsCollector {
         registerOsMetrics();
         registerCircuitBreakerMetrics();
         registerThreadPoolMetrics();
+        registerTaskMetrics();
         registerFsMetrics();
+    }
+
+    private void registerTaskMetrics() {
+        catalog.registerGauge("tasks_duration_max", "Longest task duration", "action");
+    }
+
+    private void updateTasksMetrics(ListTasksResponse listTasksResponse) {
+        List<TaskInfo> parentTasks = filterParentTasks(listTasksResponse.getTasks());
+        Map<String, TaskInfo> longestRunningTasks = parentTasksToLongestRunningTasks(parentTasks);
+
+        longRunningTaskActions.addAll(longestRunningTasks.keySet());
+        for (Map.Entry<String, TaskInfo> entry : longestRunningTasks.entrySet()) {
+            catalog.setGauge("tasks_duration_max", getRunningTimeInSeconds(entry.getValue()), entry.getKey());
+        }
+    }
+
+    private long getRunningTimeInSeconds(TaskInfo taskInfo) {
+        long runningTimeNanos = taskInfo != null ? taskInfo.getRunningTimeNanos() : 0;
+        return TimeUnit.NANOSECONDS.toSeconds(runningTimeNanos);
+    }
+
+    private Map<String, TaskInfo> parentTasksToLongestRunningTasks(List<TaskInfo> parentTasks) {
+        Map<String, TaskInfo> longestRunningTasks = new LinkedHashMap<>();
+        for (String action : longRunningTaskActions) {
+            longestRunningTasks.put(action, null);
+        }
+        for (TaskInfo parentTask : parentTasks) {
+            TaskInfo taskInfo = longestRunningTasks.get(parentTask.getAction());
+            if (taskInfo == null || taskInfo.getRunningTimeNanos()> parentTask.getRunningTimeNanos()){
+                longestRunningTasks.put(parentTask.getAction(), parentTask);
+            }
+        }
+        return longestRunningTasks;
+    }
+
+    private List<TaskInfo> filterParentTasks(List<TaskInfo> tasks) {
+        List<TaskInfo> parentTasks = new ArrayList<>();
+        for (TaskInfo task : tasks) {
+            if (!task.getParentTaskId().isSet()){
+                parentTasks.add(task);
+            }
+        }
+        return parentTasks;
     }
 
     private void registerClusterMetrics() {
@@ -520,6 +570,7 @@ public class PrometheusMetricsCollector {
 
         ClusterHealthRequest clusterHealthRequest = new ClusterHealthRequest();
         ClusterHealthResponse clusterHealthResponse = client.admin().cluster().health(clusterHealthRequest).actionGet();
+        ListTasksResponse listTasksResponse = client.admin().cluster().prepareListTasks().get();
 
         updateClusterMetrics(clusterHealthResponse);
 
@@ -537,6 +588,7 @@ public class PrometheusMetricsCollector {
         updateOsMetrics(nodeStats.getOs());
         updateCircuitBreakersMetrics(nodeStats.getBreaker());
         updateThreadPoolMetrics(nodeStats.getThreadPool());
+        updateTasksMetrics(listTasksResponse);
         updateFsMetrics(nodeStats.getFs());
 
         timer.observeDuration();
